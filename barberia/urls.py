@@ -43,4 +43,8 @@ urlpatterns = [
     # Endpoint JSON:
     path('api/login/', v.api_login, name='api_login'),  # <-- endpoint JSON
     path('api/solicitar_tabla/', v.api_solicitar_tabla, name='api_solicitar_tabla'),  # <—
+    
+    path('api/crear_registro/', v.api_crear_registro, name='api_crear_registro'),
+    path('api/actualizar_tabla/', v.api_actualizar_tabla, name='api_actualizar_tabla'),
+    path('api/eliminar_registro/', v.api_eliminar_registro, name='api_eliminar_registro'),
 ]
