@@ -15,6 +15,8 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.urls import path
+from . import views as v
+
 from .views import (
     Login,
     Barbero,
@@ -37,4 +39,8 @@ urlpatterns = [
     path('pagos/', Pagos.as_view(), name='pagos'),
     path('resultados/', Resultados.as_view(), name='resultados'),
     path('servicios/', Servicios.as_view(), name='servicios'),
+
+    # Endpoint JSON:
+    path('api/login/', v.api_login, name='api_login'),  # <-- endpoint JSON
+    path('api/solicitar_tabla/', v.api_solicitar_tabla, name='api_solicitar_tabla'),  # <—
 ]

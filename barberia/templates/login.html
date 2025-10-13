@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -7,5 +7,253 @@
 <body>
     <h1 style="text-align:center;">LOGIN</h1>
     
+</body>
+</html> -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LOGIN</title>
+  <style>
+    :root{
+      --bg1:#0ea5e9; /* cyan-500 */
+      --bg2:#8b5cf6; /* violet-500 */
+      --card:#0b1020f2;
+      --muted:#94a3b8;
+      --text:#e5e7eb;
+      --accent:#38bdf8;
+      --ok:#22c55e;
+      --error:#f43f5e;
+      --ring: 0 0 0 3px rgba(56,189,248,.35);
+      --radius: 18px;
+      --shadow: 0 10px 35px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+      color:var(--text);
+      background: radial-gradient(1200px 600px at 10% -10%, rgba(255,255,255,.05) 0 35%, transparent 35% 100%),
+                  linear-gradient(120deg, var(--bg1), var(--bg2));
+      display:grid; place-items:center;
+    }
+    .card{
+      width:min(92vw, 440px);
+      background:var(--card);
+      border:1px solid rgba(148,163,184,.2);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:26px;
+      backdrop-filter: blur(6px);
+    }
+    .brand{
+      display:flex; align-items:center; gap:12px; margin-bottom:8px
+    }
+    .logo{
+      width:42px; height:42px; border-radius:12px;
+      background:linear-gradient(135deg,#111827,#334155);
+      display:grid; place-items:center;
+      border:1px solid rgba(255,255,255,.12);
+    }
+    .brand h1{font-size:1.4rem; margin:0}
+    .muted{color:var(--muted); font-size:.95rem}
+    .roles{
+      display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:16px 0 6px;
+    }
+    .role{
+      border:1px solid rgba(148,163,184,.25);
+      background:#0f172a;
+      color:var(--text);
+      padding:14px 10px;
+      border-radius:14px;
+      text-align:center;
+      cursor:pointer;
+      transition:transform .12s ease, border-color .12s ease, background .12s ease;
+      user-select:none;
+    }
+    .role:hover{ transform: translateY(-2px); }
+    .role[aria-pressed="true"]{
+      border-color:var(--accent);
+      background:linear-gradient(180deg,#0b132a,#111c36);
+      box-shadow: var(--ring);
+    }
+    .role small{display:block; color:var(--muted); font-size:.8rem; margin-top:2px}
+    form{ margin-top:12px }
+    label{display:block; font-size:.9rem; margin:10px 2px 6px}
+    input[type="text"], input[type="password"]{
+      width:100%;
+      background:#0b1226;
+      color:var(--text);
+      border:1px solid rgba(148,163,184,.25);
+      border-radius:12px;
+      padding:12px 14px;
+      outline:none;
+      transition:border-color .12s ease, box-shadow .12s ease;
+    }
+    input[type="text"]:focus, input[type="password"]:focus{
+      border-color:var(--accent);
+      box-shadow: var(--ring);
+    }
+    .row{display:flex; justify-content:space-between; align-items:center; margin-top:8px}
+    .row a{color:var(--accent); text-decoration:none; font-size:.9rem}
+    .row a:hover{text-decoration:underline}
+    .submit{
+      width:100%; margin-top:14px;
+      padding:13px 16px; border:0; border-radius:14px;
+      background:linear-gradient(90deg,#06b6d4,#3b82f6,#8b5cf6);
+      color:white; font-weight:600; letter-spacing:.2px; cursor:pointer;
+      transition: transform .12s ease, filter .12s ease, opacity .12s ease;
+    }
+    .submit:hover{ transform: translateY(-1px); filter:brightness(1.05); }
+    .submit:disabled{ opacity:.60; cursor:not-allowed; transform:none; }
+    .hint{font-size:.85rem; color:var(--muted); margin-top:10px; text-align:center}
+    .messages{margin:10px 0 0; padding:0; list-style:none}
+    .messages li{font-size:.9rem; padding:8px 10px; border-radius:10px; margin-top:6px}
+    .messages .error{background:rgba(244,63,94,.12); border:1px solid rgba(244,63,94,.35)}
+    .messages .ok{background:rgba(34,197,94,.10); border:1px solid rgba(34,197,94,.35)}
+    footer{margin-top:18px; text-align:center; color:var(--muted); font-size:.8rem}
+  </style>
+</head>
+<body>
+  <main class="card" role="main" aria-labelledby="welcome-title">
+    <div class="brand">
+      <div class="logo" aria-hidden="true">💈</div>
+      <div>
+        <h1 id="welcome-title">Bienvenido a Barbería</h1>
+        <div class="muted">Elige tu rol para ingresar</div>
+      </div>
+    </div>
+
+    <!-- Selector de rol -->
+    <div class="roles" role="tablist" aria-label="Selecciona tu rol">
+      <button type="button" class="role" data-role="duenio" aria-pressed="false" role="tab">
+        Dueño <small>Panel administrativo</small>
+      </button>
+      <button type="button" class="role" data-role="barbero" aria-pressed="false" role="tab">
+        Barbero <small>Agenda y servicios</small>
+      </button>
+      <button type="button" class="role" data-role="cliente" aria-pressed="false" role="tab">
+        Cliente <small>Citas y perfil</small>
+      </button>
+    </div>
+
+    <!-- Formularios Django messages (opcional) -->
+    {% if messages %}
+    <ul class="messages" aria-live="polite">
+      {% for message in messages %}
+        <li class="{{ message.tags }}">{{ message }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <!-- Formulario de login -->
+    <form method="post" action="{% url 'login' %}">
+      {% csrf_token %}
+      <input type="hidden" name="role" id="role" value="" />
+
+      <label for="username">Usuario</label>
+      <input id="username" name="username" type="text" autocomplete="username" placeholder="Tu usuario" required disabled />
+
+      <label for="password">Contraseña</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required disabled />
+
+      <div class="row">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" name="remember" value="1" />
+          <span>Recordarme</span>
+        </label>
+      </div>
+
+      <button class="submit" id="submit" type="submit" disabled>Ingresar</button>
+      <div class="hint" id="hint">Selecciona un rol para continuar</div>
+    </form>
+
+    <footer>
+      © {{ now|date:"Y" }} Barbería — Hecho con ❤️
+    </footer>
+  </main>
+
+  <script>
+    (function () {
+      const roles = document.querySelectorAll('.role');
+      const hiddenRole = document.getElementById('role');
+      const username = document.getElementById('username');
+      const password = document.getElementById('password');
+      const submit = document.getElementById('submit');
+      const hint = document.getElementById('hint');
+
+      function updateButtonState() {
+        submit.disabled = !(hiddenRole.value && username.value.trim() && password.value);
+      }
+
+      roles.forEach(btn => {
+        btn.addEventListener('click', () => {
+          roles.forEach(b => b.setAttribute('aria-pressed', 'false'));
+          btn.setAttribute('aria-pressed', 'true');
+          hiddenRole.value = btn.dataset.role; // dueno | barbero | cliente
+          username.disabled = false;
+          password.disabled = false;
+          username.focus();
+          hint.textContent = 'Ingresa tu usuario y contraseña';
+          updateButtonState();
+        });
+      });
+
+      username.addEventListener('input', updateButtonState);
+      password.addEventListener('input', updateButtonState);
+    })();
+  </script>
+  <script>
+        (function () {
+            const form = document.querySelector('form');
+            const hiddenRole = document.getElementById('role');
+            const username = document.getElementById('username');
+            const password = document.getElementById('password');
+            const submit   = document.getElementById('submit');
+            const hint     = document.getElementById('hint');
+
+            form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            if (!hiddenRole.value) {
+                hint.textContent = 'Selecciona un rol para continuar';
+                return;
+            }
+
+            submit.disabled = true;
+
+            try {
+                const res = await fetch("{% url 'api_login' %}", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    role: hiddenRole.value,          // 'dueno' | 'barbero' | 'cliente'
+                    user: username.value.trim(),
+                    password: password.value
+                })
+                });
+
+                const data = await res.json();
+
+                if (data.ok) {
+                window.location.href = data.redirect;  // redirige según lo que devolvió el endpoint
+                } else {
+                hint.textContent = data.error === 'credenciales_invalidas'
+                    ? 'Usuario o contraseña incorrectos'
+                    : 'No se pudo iniciar sesión';
+                submit.disabled = false;
+                }
+            } catch (err) {
+                hint.textContent = 'Error de red. Intenta de nuevo.';
+                submit.disabled = false;
+            }
+            });
+
+            // (Opcional) Preseleccionar Dueño si estás probando solo ese rol:
+            // document.querySelector('.role[data-role="dueno"]')?.click();
+        })();
+    </script>
 </body>
 </html>

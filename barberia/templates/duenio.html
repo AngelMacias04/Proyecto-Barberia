@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!-- <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -7,5 +7,111 @@
 <body>
     <h1 style="text-align:center;">DUENIO</h1>
     
+</body>
+</html> -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DUENIO</title>
+  <style>
+    :root{
+      --bg1:#0ea5e9; --bg2:#8b5cf6; --card:#0b1020f2; --muted:#94a3b8; --text:#e5e7eb;
+      --accent:#38bdf8; --ring:0 0 0 3px rgba(56,189,248,.35); --radius:18px; --shadow:0 10px 35px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box} html,body{height:100%}
+    body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Arial;color:var(--text);
+         background:radial-gradient(1200px 600px at 10% -10%, rgba(255,255,255,.05) 0 35%, transparent 35% 100%),
+         linear-gradient(120deg,var(--bg1),var(--bg2));display:grid;place-items:start center}
+    .wrap{width:min(1100px,92vw);margin:42px 0}
+    .card{background:var(--card);border:1px solid rgba(148,163,184,.2);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px}
+    h1{margin:0 0 10px}
+    .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
+    .muted{color:var(--muted)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:12px 0 16px}
+    .btn{
+      border:1px solid rgba(148,163,184,.25);background:#0f172a;color:var(--text);
+      padding:12px;border-radius:14px;text-align:center;cursor:pointer;user-select:none;
+      transition:transform .12s ease, border-color .12s ease, background .12s ease;
+    }
+    .btn:hover{transform:translateY(-2px)}
+    table{width:100%;border-collapse:collapse;margin-top:6px}
+    th,td{border:1px solid rgba(148,163,184,.25);padding:8px 10px;font-size:.95rem}
+    th{background:#101a34}
+    .hint{color:var(--muted);margin-top:6px}
+    a.link{color:var(--accent);text-decoration:none}
+    a.link:hover{text-decoration:underline}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="top">
+        <div>
+          <h1>Panel del Dueño</h1>
+          <div class="muted">Bienvenido, {{ request.session.username }}</div>
+        </div>
+        
+      </div>
+
+      <div class="muted">Tablas disponibles</div>
+      <div class="grid">
+        <button class="btn" data-table="duenio">Duenio</button>
+        <button class="btn" data-table="barbero">Barbero</button>
+        <button class="btn" data-table="cliente">Cliente</button>
+        <button class="btn" data-table="pagos">Pagos</button>
+        <button class="btn" data-table="servicios">Servicios</button>
+        <button class="btn" data-table="citas">Citas</button>
+        <button class="btn" data-table="resultados">Resultados</button>
+      </div>
+
+      <div id="status" class="hint">Selecciona una tabla.</div>
+      <div id="table-wrap"></div>
+    </div>
+  </div>
+
+  <script>
+    const buttons = document.querySelectorAll('.btn');
+    const statusEl = document.getElementById('status');
+    const wrap = document.getElementById('table-wrap');
+
+    async function solicitarTabla(nombreTabla) {
+      statusEl.textContent = 'Cargando ' + nombreTabla + '...';
+      wrap.innerHTML = '';
+      try {
+        const res = await fetch("{% url 'api_solicitar_tabla' %}", {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: nombreTabla })
+        });
+        const data = await res.json();
+        if (!data.ok) {
+          statusEl.textContent = data.error || 'Error';
+          return;
+        }
+        const rows = data.rows || [];
+        statusEl.textContent = rows.length + ' registro(s) encontrados.';
+        if (!rows.length) { wrap.innerHTML = '<div class="hint">No hay datos.</div>'; return; }
+
+        // Construir tabla a partir de las keys del primer registro
+        const cols = Object.keys(rows[0]);
+        let html = '<table><thead><tr>';
+        cols.forEach(c => html += `<th>${c}</th>`);
+        html += '</tr></thead><tbody>';
+        rows.forEach(r => {
+          html += '<tr>';
+          cols.forEach(c => html += `<td>${r[c] ?? ''}</td>`);
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+        wrap.innerHTML = html;
+      } catch (e) {
+        statusEl.textContent = 'Error de red.';
+      }
+    }
+
+    buttons.forEach(b => b.addEventListener('click', () => solicitarTabla(b.dataset.table)));
+  </script>
 </body>
 </html>
