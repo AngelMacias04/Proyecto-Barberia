@@ -40,6 +40,9 @@ INSTALLED_APPS = [
     'barberia',
 ]
 
+DEBUG = True
+STATIC_URL = '/static/'
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
