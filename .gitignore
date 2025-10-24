@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+*.log
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# Django
+db.sqlite3
+media/
+staticfiles/
+static/
+
+# Secrets
+.env
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+*.swp

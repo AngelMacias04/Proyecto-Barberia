@@ -32,7 +32,8 @@ MODEL_MAP = {
 # ---------- Protección por sesión ----------
 def duenio_required(view_func):
     def _wrapped(request, *args, **kwargs):
-        if request.session.get("role") != "duenio":
+        role = request.session.get("role")
+        if role not in {"duenio", "barbero", "cliente"}:
             return redirect("login")
         return view_func(request, *args, **kwargs)
     return _wrapped
@@ -46,19 +47,41 @@ class Citas(TemplateView):
 class Cliente(TemplateView):
     template_name = "cliente.html"
 
+# @method_decorator(duenio_required, name="dispatch")
+# class Duenio(TemplateView):
+#     template_name = "duenio.html" # change here
+
 @method_decorator(duenio_required, name="dispatch")
 class Duenio(TemplateView):
-    template_name = "duenio.html"
+    template_name = "panel.html"
 
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["rol"] = self.request.session.get("role", "")
+        ctx["username"] = self.request.session.get("username", "")
+        return ctx
+    
 class Login(TemplateView):
     template_name = "login.html"
 
-# # --- Endpoint JSON súper simple ---
-# @csrf_exempt                # ⚠️ MVP: para producción usa CSRF token
+class Pagos(TemplateView):
+    template_name = "pagos.html"
+
+class Resultados(TemplateView):
+    template_name = "resultados.html"
+
+class Servicios(TemplateView):
+    template_name = "servicios.html"
+
+
+# === APIS === 
+# ---------- API: login ----------
+# @csrf_exempt
 # @require_POST
 # def api_login(request):
 #     data = json.loads(request.body.decode("utf-8"))
 #     role = (data.get("role") or "").strip()     # 'duenio' | 'barbero' | 'cliente'
+
 #     user = (data.get("user") or "").strip()
 #     pwd  = (data.get("password") or "")
 
@@ -93,30 +116,17 @@ class Login(TemplateView):
 #     redirect_name = {"duenio": "duenio", "barbero": "barbero", "cliente": "cliente"}[role]
 #     return JsonResponse({"ok": True, "redirect": reverse(redirect_name)})
 
-
-class Pagos(TemplateView):
-    template_name = "pagos.html"
-
-class Resultados(TemplateView):
-    template_name = "resultados.html"
-
-class Servicios(TemplateView):
-    template_name = "servicios.html"
-
-
-# === APIS === 
 # ---------- API: login ----------
-# --- Endpoint JSON súper simple ---
-@csrf_exempt                # ⚠️ MVP: para producción usa CSRF token
+@csrf_exempt
 @require_POST
 def api_login(request):
     data = json.loads(request.body.decode("utf-8"))
     role = (data.get("role") or "").strip()     # 'duenio' | 'barbero' | 'cliente'
-    user = (data.get("user") or "").strip()
+    login_input = (data.get("user") or "").strip()  # el front siempre manda 'user'
     pwd  = (data.get("password") or "")
 
     model_map = {
-        "duenio":   DuenioModel,
+        "duenio":  DuenioModel,
         "barbero": BarberoModel,
         "cliente": ClienteModel,
     }
@@ -126,25 +136,26 @@ def api_login(request):
     Model = model_map[role]
     pk_name = Model._meta.pk.name
 
-    # MVP: trae toda la tabla a un arreglo y filtra en Python
-    rows = list(Model.objects.values("user", "password", pk_name))
-    match = next(
-        (r for r in rows
-        if (r.get("user") or "").strip() == user and (r.get("password") or "") == pwd),
-        None
-    )
+    # Campo de login según el rol:
+    login_field = "user" if role == "duenio" else "nombre"
 
+    # Buscar directo en la BD
+    match = (
+        Model.objects
+        .filter(**{login_field: login_input, "password": pwd})
+        .values(login_field, pk_name)
+        .first()
+    )
     if not match:
         return JsonResponse({"ok": False, "error": "credenciales_invalidas"}, status=401)
 
-    # Si quieres sesión de servidor (útil para vistas protegidas luego):
+    # Sesión
     request.session["role"] = role
-    request.session["username"] = user
+    request.session["username"] = match[login_field]  # guarda 'user' o 'nombre' según toque
     request.session["user_pk"] = match[pk_name]
 
-    # A dónde redirigir (nombres de URL)
-    redirect_name = {"duenio": "duenio", "barbero": "barbero", "cliente": "cliente"}[role]
-    return JsonResponse({"ok": True, "redirect": reverse(redirect_name)})
+    # Siempre redirge a 'duenio'
+    return JsonResponse({"ok": True, "redirect": reverse("duenio")})
 
 # Helper: resuelve modelo, lista de campos "planos" y nombre de PK
 def _model_and_meta(table: str):
@@ -173,9 +184,14 @@ def _model_and_meta(table: str):
 @csrf_exempt
 @require_POST
 def api_solicitar_tabla(request):
+    role = (request.session.get("role") or "").strip().lower()
+    user_pk = str(request.session.get("user_pk") or "")
+    if not role or not user_pk:
+        return JsonResponse({"ok": False, "error": "no_autenticado"}, status=401)
+    # 
     # Solo dueños pueden consultar tablas
-    if request.session.get("role") != "duenio":
-        return JsonResponse({"ok": False, "error": "no_autorizado"}, status=403)
+    # if request.session.get("role") != "duenio":
+    #     return JsonResponse({"ok": False, "error": "no_autorizado"}, status=403)
 
     # Body JSON robusto
     try:
@@ -185,18 +201,50 @@ def api_solicitar_tabla(request):
 
     table = (data.get("table") or "").strip().lower()
 
-    # Usa tu helper para resolver modelo y columnas válidas
+    # Usa helper para resolver modelo y columnas válidas
     Model, meta = _model_and_meta(table)
     if not Model:
         return JsonResponse({"ok": False, "error": "tabla_invalida"}, status=400)
 
     try:
-        # Devuelve SOLO rows para que tu front siga igual
-        rows = list(Model.objects.values(*meta["fields"]))
+        # 1) Arranca queryset
+        qs = Model.objects.all()
+
+        # 2) Filtrado directo por rol/tabla (dueño ve todo)
+        if role != "duenio":
+            if table == role:
+                # barbero -> id_barbero; cliente -> id_cliente
+                qs = qs.filter(**{f"id_{role}": user_pk})
+
+            elif table == "citas":
+                # citas tiene id_barbero e id_cliente
+                qs = qs.filter(**{f"id_{role}": user_pk})
+
+            elif table == "resultados":
+                if role == "barbero":
+                    qs = qs.filter(id_barbero=user_pk)
+                elif role == "cliente":
+                    # resultados de MIS citas
+                    qs = qs.filter(
+                        id_cita__in=CitasModel.objects
+                            .filter(id_cliente=user_pk)
+                            .values_list("id_cita", flat=True)
+                    )
+            # 'pagos' y 'servicios' = catálogos → sin filtro
+
+        # 3) Proyección y respuesta (tu front sigue igual)
+        rows = list(qs.values(*meta["fields"]))
         return JsonResponse({"ok": True, "rows": rows})
+
     except Exception as e:
-        # Evita que salga el HTML de error de Django (causa el "Error de red")
         return JsonResponse({"ok": False, "error": f"server_error: {e}"}, status=500)
+    # try:
+    #     # Devuelve SOLO rows para que front siga igual
+    #     rows = list(Model.objects.values(*meta["fields"]))
+    #     return JsonResponse({"ok": True, "rows": rows})
+    # except Exception as e:
+    #     # Evita que salga el HTML de error de Django (causa el "Error de red")
+    #     return JsonResponse({"ok": False, "error": f"server_error: {e}"}, status=500)
 
 # ---------- CREATE ----------
 @csrf_exempt
@@ -222,7 +270,7 @@ def api_crear_registro(request):
     except Exception as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=400)
 
-# ---------- UPDATE (masivo: envías todas las filas editadas) ----------
+# ---------- UPDATE ----------
 @csrf_exempt
 @require_POST
 def api_actualizar_tabla(request):
@@ -252,13 +300,15 @@ def api_actualizar_tabla(request):
     except Exception as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=400)
 
-# ---------- DELETE (una fila por vez) ----------
+# ---------- DELETE ----------
 @csrf_exempt
 @require_POST
 def api_eliminar_registro(request):
-    if request.session.get("role") != "duenio":
-        return JsonResponse({"ok": False, "error": "no_autorizado"}, status=403)
-
+    rol = (request.session.get("role") or "").strip().lower()
+    user_pk = str(request.session.get("user_pk") or "")
+    if not rol or not user_pk:
+        return JsonResponse({"ok": False, "error": "no_autenticado"}, status=401)
+    
     data = json.loads(request.body.decode("utf-8"))
     table = (data.get("table") or "").strip().lower()
     pk_val = data.get("pk")
