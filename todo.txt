@@ -1,5 +1,0 @@
-Quitar esto de las apis
-if request.session.get("role") != "duenio":
-         return JsonResponse({"ok": False, "error": "no_autorizado"}, status=403)
-
-Siempre esta redireccionando a duenio -> esto se debe al redirect que hace la api

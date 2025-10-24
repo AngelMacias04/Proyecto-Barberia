@@ -19,26 +19,14 @@ from . import views as v
 
 from .views import (
     Login,
-    Barbero,
-    Citas,
-    Cliente,
     Duenio,
-    Pagos,
-    Resultados,
-    Servicios,
 )
 
 urlpatterns = [
-    # ruta raíz: al entrar al sitio mostramos el login
-    path('', Login.as_view(), name='login'),
-    path('login/', Login.as_view(), name='login_page'),
-    path('barbero/', Barbero.as_view(), name='barbero'),
-    path('citas/', Citas.as_view(), name='citas'),
-    path('cliente/', Cliente.as_view(), name='cliente'),
-    path('duenio/', Duenio.as_view(), name='duenio'),
-    path('pagos/', Pagos.as_view(), name='pagos'),
-    path('resultados/', Resultados.as_view(), name='resultados'),
-    path('servicios/', Servicios.as_view(), name='servicios'),
+    # Root -> login
+    path("", Login.as_view(), name="login"),
+    path("login/", Login.as_view(), name="login_page"),
+    path("duenio/", Duenio.as_view(), name="duenio"),
 
     # Endpoint JSON:
     path('api/login/', v.api_login, name='api_login'),  # <-- endpoint JSON
