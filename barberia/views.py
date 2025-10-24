@@ -92,7 +92,7 @@ def api_login(request):
     request.session["user_pk"] = match[pk_name]
 
     # Siempre redirge a 'duenio'
-    return JsonResponse({"ok": True, "redirect": reverse("duenio")})
+    return JsonResponse({"ok": True, "redirect": reverse("bienvenido")})
 
 # Helper: resuelve modelo, lista de campos "planos" y nombre de PK
 def _model_and_meta(table: str):
