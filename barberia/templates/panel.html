@@ -98,6 +98,25 @@
   </div>
 
   <script>
+    // Qué campos son obligatorios por tabla (ajústalo a tus reglas)
+    const REQUIRED_FIELDS = {
+      citas: ['id_cita','id_barbero_id','id_cliente_id','dia','hora','servicio1_id','total'],
+      servicios: ['id_servicio','servicio','precio'],
+      pagos: ['id_tipodepago','tipodepago'],
+      resultados: ['id_resultado','id_barbero_id','id_cita_id','total'],
+      barbero: ['id_barbero'],
+      cliente: ['id_cliente'],
+      duenio: ['id_duenio','user','password']
+    };
+
+    // '' o 'NULL' → null (NULL real de JSON/SQL)
+    function normalizeValue(v){
+      const t = (v ?? '').trim();
+      if (t === '' || /^null$/i.test(t)) return null;
+      return t;
+    }
+
+
     // === NUEVO: rol en JS ===
     const ROLE = "{{ request.session.role|default:''|lower }}";
 
@@ -222,35 +241,36 @@
 
     // ---------- CREATE ----------
     btnCreate.addEventListener('click', async () => {
-      if (!currentTable || !cols.length) return;
-      if (isReadonly(currentTable)) return; // === NUEVO ===
+    if (!currentTable || !cols.length || isReadonly(currentTable)) return;
 
-      const tr = document.getElementById('create-row');
-      if (!tr) { statusEl.textContent = 'No hay fila de creación.'; return; }
+    const tr = document.getElementById('create-row');
+    if (!tr) { statusEl.textContent = 'No hay fila de creación.'; return; }
 
-      const tds = Array.from(tr.querySelectorAll('td'));
-      const row = {};
-      cols.forEach((c,i) => row[c] = (tds[i].innerText || '').trim());
+    const tds = Array.from(tr.querySelectorAll('td'));
+    const row = {};
+    cols.forEach((c,i) => row[c] = normalizeValue(tds[i].innerText));
 
-      // Validación mínima: todos los campos con info
-      const allFilled = Object.values(row).every(v => v !== '');
-      if (!allFilled) { statusEl.textContent = 'Completa todos los campos para crear.'; return; }
+    const required = REQUIRED_FIELDS[currentTable] || [];
+    const missing = required.filter(k => row[k] === null);
+    if (missing.length){
+      statusEl.textContent = 'Faltan campos obligatorios: ' + missing.join(', ');
+      return;
+    }
 
-      try {
-        const res = await fetch("{% url 'api_crear_registro' %}", {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ table: currentTable, row })
-        });
-        const data = await res.json();
-        if (!data.ok) { statusEl.textContent = data.error || 'Error al crear.'; return; }
-
-        statusEl.textContent = 'Registro creado.';
-        solicitarTabla(currentTable); // recarga
-      } catch {
-        statusEl.textContent = 'Error de red al crear.';
-      }
-    });
+    try {
+      const res = await fetch("{% url 'api_crear_registro' %}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ table: currentTable, row })
+      });
+      const data = await res.json();
+      if (!data.ok) { statusEl.textContent = data.error || 'Error al crear.'; return; }
+      statusEl.textContent = 'Registro creado.';
+      solicitarTabla(currentTable);
+    } catch {
+      statusEl.textContent = 'Error de red al crear.';
+    }
+});
 
     // ---------- EDIT ----------
     btnEdit.addEventListener('click', () => {

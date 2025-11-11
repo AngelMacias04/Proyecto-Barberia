@@ -48,6 +48,27 @@ class Duenio(TemplateView):
         ctx["username"] = self.request.session.get("username", "")
         return ctx
     
+def _normalize_and_validate_fks(Model, payload):
+    # 1) Normaliza "" / "NULL" -> None
+    for k, v in list(payload.items()):
+        if isinstance(v, str) and (v == "" or v.upper() == "NULL"):
+            payload[k] = None
+
+    # 2) Valida FKs
+    for f in Model._meta.fields:
+        if getattr(f, "is_relation", False) and getattr(f, "many_to_one", False):
+            key = f.attname  # p.ej. 'servicio2_id'
+            if key in payload:
+                val = payload[key]
+                if val is None:
+                    if not f.null:
+                        return f"'{key}' es obligatorio"
+                else:
+                    target = f.target_field.attname  # p.ej. 'id_servicio'
+                    if not f.related_model.objects.filter(**{target: val}).exists():
+                        return f"fk_inexistente: {key}={val}"
+    return None
+    
 class Login(TemplateView):
     template_name = "login.html"
 
@@ -176,9 +197,6 @@ def api_solicitar_tabla(request):
 @csrf_exempt
 @require_POST
 def api_crear_registro(request):
-    if request.session.get("role") != "duenio":
-        return JsonResponse({"ok": False, "error": "no_autorizado"}, status=403)
-
     data = json.loads(request.body.decode("utf-8"))
     table = (data.get("table") or "").strip().lower()
     row   = data.get("row") or {}
@@ -187,8 +205,13 @@ def api_crear_registro(request):
     if not Model:
         return JsonResponse({"ok": False, "error": "tabla_invalida"}, status=400)
 
-    # Filtra sólo columnas válidas
     payload = {k: v for k, v in row.items() if k in meta["fields"]}
+
+    # Normaliza/valida FKs (tu helper)
+    err = _normalize_and_validate_fks(Model, payload)
+    if err:
+        return JsonResponse({"ok": False, "error": err}, status=400)
+
     try:
         obj = Model.objects.create(**payload)
         pk_value = getattr(obj, meta["pk"])
@@ -200,8 +223,6 @@ def api_crear_registro(request):
 @csrf_exempt
 @require_POST
 def api_actualizar_tabla(request):
-    if request.session.get("role") != "duenio":
-        return JsonResponse({"ok": False, "error": "no_autorizado"}, status=403)
 
     data = json.loads(request.body.decode("utf-8"))
     table = (data.get("table") or "").strip().lower()
@@ -213,16 +234,37 @@ def api_actualizar_tabla(request):
 
     pk, fields = meta["pk"], meta["fields"]
     updated = 0
+    errors  = []
+
     try:
-        for r in rows:
+        for i, r in enumerate(rows):
             if pk not in r:
+                errors.append({"index": i, "error": f"falta_pk:{pk}"})
                 continue
+
             pk_val = r[pk]
+            # Solo columnas válidas (sin PK)
             payload = {k: r[k] for k in fields if k in r and k != pk}
-            if payload:
-                Model.objects.filter(**{pk: pk_val}).update(**payload)
-                updated += 1
-        return JsonResponse({"ok": True, "updated": updated})
+
+            # Normaliza vacíos/"NULL" -> None (no solo en FKs)
+            for k, v in list(payload.items()):
+                if isinstance(v, str) and (v.strip() == "" or v.strip().lower() == "null"):
+                    payload[k] = None
+
+            # Valida/normaliza FKs
+            err = _normalize_and_validate_fks(Model, payload)
+            if err:
+                errors.append({"index": i, "pk": pk_val, "error": err})
+                continue
+
+            # Ejecuta update y cuenta afectadas
+            affected = Model.objects.filter(**{pk: pk_val}).update(**payload)
+            if affected == 0:
+                # puede ser PK inexistente o los valores ya eran iguales
+                errors.append({"index": i, "pk": pk_val, "error": "sin_cambios_o_no_encontrado"})
+            updated += affected
+
+        return JsonResponse({"ok": True, "updated": updated, "errors": errors})
     except Exception as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=400)
 
