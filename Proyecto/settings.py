@@ -25,7 +25,7 @@ SECRET_KEY = 'django-insecure-qm99$m@o)vo%$&)xm(yq&6u%cubky)(my^r+*(ygxpki_d=lo+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'barberia',
+    'import_export',
 ]
 
 DEBUG = True
