@@ -7,6 +7,8 @@ from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_exempt
 import json
 from django.utils.decorators import method_decorator 
+from django.db import connection
+from datetime import date
 
 # Modelos (ajusta si aún no tienes Barbero/Cliente)
 from .models import Duenio as DuenioModel
@@ -212,6 +214,43 @@ def api_crear_registro(request):
     if err:
         return JsonResponse({"ok": False, "error": err}, status=400)
 
+    # Usar SP para crear citas con validación de disponibilidad y total calculado
+    if table == "citas":
+        required = ["id_barbero_id", "id_cliente_id", "dia", "hora"]
+        missing = [r for r in required if r not in payload or payload[r] in ("", None)]
+        if missing:
+            return JsonResponse({"ok": False, "error": f"faltan_campos:{','.join(missing)}"}, status=400)
+
+        params = [
+            payload.get("id_barbero_id"),
+            payload.get("id_cliente_id"),
+            payload.get("dia"),
+            payload.get("hora"),
+            payload.get("servicio1_id"),
+            payload.get("servicio2_id"),
+            payload.get("servicio3_id"),
+        ]
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "CALL sp_crear_cita(%s,%s,%s,%s,%s,%s,%s)",
+                    params,
+                )
+                result = cursor.fetchall()
+                cols = [c[0] for c in cursor.description] if cursor.description else []
+            if not result:
+                return JsonResponse({"ok": False, "error": "sp_sin_resultado"}, status=500)
+
+            row0 = dict(zip(cols, result[0])) if cols else {}
+            pk_value = row0.get("id_cita") or result[0][0]
+            total = row0.get("total_calculado")
+            return JsonResponse({"ok": True, "pk": pk_value, "total": total})
+        except Exception as e:
+            msg = str(e)
+            if "barbero_ocupado" in msg:
+                return JsonResponse({"ok": False, "error": "barbero_ocupado"}, status=400)
+            return JsonResponse({"ok": False, "error": f"sp_error:{msg}"}, status=400)
+
     try:
         obj = Model.objects.create(**payload)
         pk_value = getattr(obj, meta["pk"])
@@ -290,3 +329,41 @@ def api_eliminar_registro(request):
         return JsonResponse({"ok": True, "deleted": deleted})
     except Exception as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=400)
+
+
+# ---------- TOP servicios / clientes ----------
+@csrf_exempt
+@require_POST
+def api_top_servicios_clientes(request):
+    role = (request.session.get("role") or "").strip().lower()
+    if role != "duenio":
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    try:
+        data = json.loads(request.body.decode("utf-8"))
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": f"json_invalido:{e}"}, status=400)
+
+    inicio = data.get("inicio") or str(date.today().replace(month=1, day=1))
+    fin = data.get("fin") or str(date.today())
+    limit = int(data.get("limit") or 5)
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.callproc("sp_top_servicios_clientes", [inicio, fin, limit])
+            top_servicios = cursor.fetchall()
+            cols_serv = [c[0] for c in cursor.description] if cursor.description else []
+            cursor.nextset()
+            top_clientes = cursor.fetchall()
+            cols_cli = [c[0] for c in cursor.description] if cursor.description else []
+
+        def as_dict(rows, cols):
+            return [dict(zip(cols, r)) for r in rows] if cols else []
+
+        return JsonResponse({
+            "ok": True,
+            "servicios": as_dict(top_servicios, cols_serv),
+            "clientes": as_dict(top_clientes, cols_cli),
+        })
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": f"sp_error:{e}"}, status=400)

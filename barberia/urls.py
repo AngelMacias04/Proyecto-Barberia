@@ -30,4 +30,5 @@ urlpatterns = [
     path('api/crear_registro/', v.api_crear_registro, name='api_crear_registro'),
     path('api/actualizar_tabla/', v.api_actualizar_tabla, name='api_actualizar_tabla'),
     path('api/eliminar_registro/', v.api_eliminar_registro, name='api_eliminar_registro'),
+    path('api/top/', v.api_top_servicios_clientes, name='api_top_servicios_clientes'),
 ]

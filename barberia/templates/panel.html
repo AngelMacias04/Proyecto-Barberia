@@ -73,6 +73,7 @@
                 <button class="btn" data-table="servicios">Servicios</button>
                 <button class="btn" data-table="citas">Citas</button>
                 <button class="btn" data-table="resultados">Resultados</button>
+                <button class="btn" id="btn-ranking" data-ranking="true">Ranking</button>
             {% elif request.session.role == 'barbero' %}
                 <button class="btn" data-table="citas">Citas</button>
                 <button class="btn" data-table="resultados">Resultados</button>
@@ -94,6 +95,28 @@
 
       <div id="status" class="hint">Selecciona una tabla.</div>
       <div id="table-wrap"></div>
+
+      {% if request.session.role == 'duenio' %}
+      <div class="card" id="rank-card" style="margin-top:18px;background:#0f1a33;border-color:rgba(148,163,184,.25);display:none">
+        <div class="top" style="margin-bottom:8px">
+          <h3 style="margin:0">Ranking de servicios y clientes</h3>
+          <div class="muted">Consulta por rango de fechas</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+          <label class="muted">Inicio<br><input id="rank-inicio" type="date" style="padding:8px;border-radius:10px;border:1px solid rgba(148,163,184,.3);background:#0b1020;color:var(--text)"></label>
+          <label class="muted">Fin<br><input id="rank-fin" type="date" style="padding:8px;border-radius:10px;border:1px solid rgba(148,163,184,.3);background:#0b1020;color:var(--text)"></label>
+          <label class="muted">Límite<br>
+            <select id="rank-limit" style="padding:8px;border-radius:10px;border:1px solid rgba(148,163,184,.3);background:#0b1020;color:var(--text)">
+              <option value="5">Top 5</option>
+              <option value="10">Top 10</option>
+            </select>
+          </label>
+          <button id="btn-rank" class="btn btn-sm btn-primary">Ver ranking</button>
+        </div>
+        <div id="rank-status" class="hint" style="margin-top:8px">Sin resultados.</div>
+        <div id="rank-wrap" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:12px"></div>
+      </div>
+      {% endif %}
     </div>
   </div>
 
@@ -130,6 +153,11 @@
     const btnSave    = document.getElementById('btn-save');
     const btnCancel  = document.getElementById('btn-cancel');
     const btnDelete  = document.getElementById('btn-delete');
+    const btnRank    = document.getElementById('btn-rank');
+    const btnRankingToggle = document.getElementById('btn-ranking');
+    const rankWrap   = document.getElementById('rank-wrap');
+    const rankStatus = document.getElementById('rank-status');
+    const rankCard   = document.getElementById('rank-card');
 
     let currentTable = null;
     let cols = [];            // columnas actuales
@@ -362,9 +390,81 @@
     });
 
     // listeners de los botones de tabla
-    gridBtns.forEach(b => b.addEventListener('click', () => solicitarTabla(b.dataset.table)));
+    function showRankingSection() {
+      currentTable = null;
+      setToolbarFor(null); // oculta toolbar
+      wrap.innerHTML = '';
+      statusEl.textContent = 'Ranking de servicios y clientes.';
+      if (rankCard) rankCard.style.display = '';
+      fetchRanking();
+    }
+
+    gridBtns.forEach(b => b.addEventListener('click', () => {
+      // botón de ranking (no tabla)
+      if (b.dataset && b.dataset.ranking) {
+        showRankingSection();
+        return;
+      }
+      // botones de tabla
+      if (rankCard) rankCard.style.display = 'none';
+      solicitarTabla(b.dataset.table);
+    }));
     // opcional: precargar una tabla
     // solicitarTabla('duenio');
+
+    // === Ranking (solo dueño) ===
+    async function fetchRanking() {
+      if (!btnRank) return;
+      const inicio = document.getElementById('rank-inicio').value;
+      const fin = document.getElementById('rank-fin').value;
+      const limit = document.getElementById('rank-limit').value || 5;
+      rankStatus.textContent = 'Cargando ranking...';
+      rankWrap.innerHTML = '';
+      try {
+        const res = await fetch("{% url 'api_top_servicios_clientes' %}", {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inicio, fin, limit })
+        });
+        const data = await res.json();
+        if (!data.ok) { rankStatus.textContent = data.error || 'Error'; return; }
+
+        const { servicios = [], clientes = [] } = data;
+        rankStatus.textContent = `Top ${limit} servicios y clientes`;
+
+        const card = (title, rows, cols) => {
+          if (!rows.length) return `<div class="hint">Sin datos para ${title.toLowerCase()}.</div>`;
+          let html = `<div class="card" style="background:#0b1329;border:1px solid rgba(148,163,184,.2)"><div class="muted">${title}</div><table style="margin-top:6px;font-size:.9rem"><thead><tr>`;
+          cols.forEach(c => html += `<th>${c}</th>`);
+          html += '</tr></thead><tbody>';
+          rows.forEach(r => {
+            html += '<tr>';
+            cols.forEach(c => html += `<td>${r[c] ?? ''}</td>`);
+            html += '</tr>';
+          });
+          html += '</tbody></table></div>';
+          return html;
+        };
+
+        rankWrap.innerHTML =
+          card('Servicios', servicios, ['id_servicio','servicio','usos','total_estimado']) +
+          card('Clientes', clientes, ['id_cliente','nombre','citas','total_gastado']);
+      } catch (e) {
+        rankStatus.textContent = 'Error de red';
+      }
+    }
+
+    if (btnRank) {
+      // valores por defecto de rango (año actual)
+      const today = new Date();
+      const yearStart = `${today.getFullYear()}-01-01`;
+      document.getElementById('rank-inicio').value = yearStart;
+      document.getElementById('rank-fin').value = today.toISOString().slice(0,10);
+      btnRank.addEventListener('click', () => {
+        if (rankCard) rankCard.style.display = '';
+        fetchRanking();
+      });
+    }
   </script>
 </body>
 </html>
