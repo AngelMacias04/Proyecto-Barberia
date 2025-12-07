@@ -91,6 +91,14 @@
         <button id="btn-save"    class="btn btn-sm" title="Guardar todos los cambios" disabled>Guardar cambios</button>
         <button id="btn-cancel"  class="btn btn-sm" title="Cancelar edición" disabled>Cancelar</button>
         <button id="btn-delete"  class="btn btn-sm" title="Eliminar una fila seleccionada">Eliminar</button>
+        {% if request.session.role == 'duenio' %}
+        <button id="btn-export"  class="btn btn-sm" title="Respaldar tabla actual a CSV">Respaldar CSV</button>
+        <button id="btn-import"  class="btn btn-sm" title="Importar CSV a la tabla actual">Importar CSV</button>
+        <input type="file" id="input-import" accept=".csv" style="display:none">
+        <button id="btn-export-all" class="btn btn-sm" title="Respaldar todas las tablas a ZIP de CSVs">Respaldar todo</button>
+        <button id="btn-import-all" class="btn btn-sm" title="Restaurar todas las tablas desde ZIP de CSVs">Importar todo</button>
+        <input type="file" id="input-import-all" accept=".zip" style="display:none">
+        {% endif %}
       </div>
 
       <div id="status" class="hint">Selecciona una tabla.</div>
@@ -153,6 +161,12 @@
     const btnSave    = document.getElementById('btn-save');
     const btnCancel  = document.getElementById('btn-cancel');
     const btnDelete  = document.getElementById('btn-delete');
+    const btnExport  = document.getElementById('btn-export');
+    const btnImport  = document.getElementById('btn-import');
+    const inputImport= document.getElementById('input-import');
+    const btnExportAll = document.getElementById('btn-export-all');
+    const btnImportAll = document.getElementById('btn-import-all');
+    const inputImportAll = document.getElementById('input-import-all');
     const btnRank    = document.getElementById('btn-rank');
     const btnRankingToggle = document.getElementById('btn-ranking');
     const rankWrap   = document.getElementById('rank-wrap');
@@ -388,6 +402,121 @@
         deleteMode = false;
       }
     });
+
+    // ---------- EXPORT / IMPORT CSV (solo dueño) ----------
+    async function exportCsv() {
+      if (!btnExport) return;
+      if (!currentTable || !cols.length) { statusEl.textContent = 'Selecciona una tabla para exportar.'; return; }
+      try {
+        const res = await fetch("{% url 'api_export_csv' %}", {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: currentTable })
+        });
+        if (!res.ok) { statusEl.textContent = 'Error al exportar.'; return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = res.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g,'') || `${currentTable}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        statusEl.textContent = 'CSV descargado.';
+      } catch {
+        statusEl.textContent = 'Error de red al exportar.';
+      }
+    }
+
+    async function importCsv(file) {
+      if (!currentTable) { statusEl.textContent = 'Selecciona una tabla para importar.'; return; }
+      const fd = new FormData();
+      fd.append('table', currentTable);
+      fd.append('file', file);
+      statusEl.textContent = 'Importando...';
+      try {
+        const res = await fetch("{% url 'api_import_csv' %}", {
+          method: 'POST',
+          body: fd
+        });
+        const data = await res.json();
+        if (!data.ok) { statusEl.textContent = data.error || 'Error al importar.'; return; }
+        statusEl.textContent = `Importación completada. Filas creadas: ${data.created}`;
+        solicitarTabla(currentTable);
+      } catch {
+        statusEl.textContent = 'Error de red al importar.';
+      }
+    }
+
+    if (btnExport) {
+      btnExport.addEventListener('click', exportCsv);
+    }
+    if (btnImport && inputImport) {
+      btnImport.addEventListener('click', () => inputImport.click());
+      inputImport.addEventListener('change', () => {
+        if (inputImport.files && inputImport.files[0]) {
+          importCsv(inputImport.files[0]);
+          inputImport.value = '';
+        }
+      });
+    }
+
+    // Export/Import ALL
+    async function exportAll() {
+      if (!btnExportAll) return;
+      statusEl.textContent = 'Generando respaldo completo...';
+      try {
+        const res = await fetch("{% url 'api_export_all' %}", {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        if (!res.ok) { statusEl.textContent = 'Error al exportar todo.'; return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = res.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g,'') || 'backup.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        statusEl.textContent = 'Respaldo completo descargado.';
+      } catch {
+        statusEl.textContent = 'Error de red al exportar todo.';
+      }
+    }
+
+    async function importAll(file) {
+      if (!btnImportAll) return;
+      const fd = new FormData();
+      fd.append('file', file);
+      statusEl.textContent = 'Restaurando todo...';
+      try {
+        const res = await fetch("{% url 'api_import_all' %}", {
+          method: 'POST',
+          body: fd
+        });
+        const data = await res.json();
+        if (!data.ok) { statusEl.textContent = data.error || 'Error al importar todo.'; return; }
+        statusEl.textContent = 'Restauración completa.';
+        if (currentTable) solicitarTabla(currentTable);
+      } catch {
+        statusEl.textContent = 'Error de red al importar todo.';
+      }
+    }
+
+    if (btnExportAll) btnExportAll.addEventListener('click', exportAll);
+    if (btnImportAll && inputImportAll) {
+      btnImportAll.addEventListener('click', () => inputImportAll.click());
+      inputImportAll.addEventListener('change', () => {
+        if (inputImportAll.files && inputImportAll.files[0]) {
+          importAll(inputImportAll.files[0]);
+          inputImportAll.value = '';
+        }
+      });
+    }
 
     // listeners de los botones de tabla
     function showRankingSection() {

@@ -1,5 +1,5 @@
 from django.views.generic import TemplateView
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.shortcuts import redirect
 from django.contrib import messages
 from django.urls import reverse
@@ -7,8 +7,11 @@ from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_exempt
 import json
 from django.utils.decorators import method_decorator 
-from django.db import connection
-from datetime import date
+from django.db import connection, transaction
+from datetime import date, datetime
+import csv
+import io
+import zipfile
 
 # Modelos (ajusta si aún no tienes Barbero/Cliente)
 from .models import Duenio as DuenioModel
@@ -329,6 +332,194 @@ def api_eliminar_registro(request):
         return JsonResponse({"ok": True, "deleted": deleted})
     except Exception as e:
         return JsonResponse({"ok": False, "error": str(e)}, status=400)
+
+
+# ---------- EXPORT CSV ----------
+@csrf_exempt
+@require_POST
+def api_export_csv(request):
+    role = (request.session.get("role") or "").strip().lower()
+    if role != "duenio":
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    try:
+        data = json.loads(request.body.decode("utf-8"))
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": f"json_invalido:{e}"}, status=400)
+
+    table = (data.get("table") or "").strip().lower()
+    Model, meta = _model_and_meta(table)
+    if not Model:
+        return JsonResponse({"ok": False, "error": "tabla_invalida"}, status=400)
+
+    try:
+        rows = list(Model.objects.values(*meta["fields"]))
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer)
+        writer.writerow(meta["fields"])
+        for r in rows:
+            writer.writerow([r.get(f, "") if r.get(f, "") is not None else "" for f in meta["fields"]])
+
+        csv_text = buffer.getvalue()
+        # UTF-8 con BOM para que Excel lo detecte al abrir con doble clic
+        content_bytes = csv_text.encode("utf-8-sig")
+        resp = HttpResponse(content_bytes, content_type="text/csv; charset=utf-8")
+        filename = f"{table}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+        resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return resp
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": f"export_error:{e}"}, status=400)
+
+
+# ---------- EXPORT CSV (TODAS LAS TABLAS) ----------
+@csrf_exempt
+@require_POST
+def api_export_all(request):
+    role = (request.session.get("role") or "").strip().lower()
+    if role != "duenio":
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    # Orden para respetar FKs básicas
+    table_order = ["pagos", "servicios", "barbero", "cliente", "citas", "resultados", "duenio"]
+
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for table in table_order:
+            Model, meta = _model_and_meta(table)
+            if not Model:
+                continue
+            rows = list(Model.objects.values(*meta["fields"]))
+            buffer = io.StringIO(newline="")
+            writer = csv.writer(buffer)
+            writer.writerow(meta["fields"])
+            for r in rows:
+                writer.writerow([r.get(f, "") if r.get(f, "") is not None else "" for f in meta["fields"]])
+            csv_text = buffer.getvalue()
+            zf.writestr(f"{table}.csv", csv_text.encode("utf-8-sig"))
+
+    mem.seek(0)
+    resp = HttpResponse(mem.read(), content_type="application/zip")
+    filename = f"backup-todo-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    resp["Content-Disposition"] = f'attachment; filename=\"{filename}\"'
+    return resp
+
+
+# ---------- IMPORT CSV ----------
+@csrf_exempt
+@require_POST
+def api_import_csv(request):
+    role = (request.session.get("role") or "").strip().lower()
+    if role != "duenio":
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    table = (request.POST.get("table") or "").strip().lower()
+    Model, meta = _model_and_meta(table)
+    if not Model:
+        return JsonResponse({"ok": False, "error": "tabla_invalida"}, status=400)
+
+    if "file" not in request.FILES:
+        return JsonResponse({"ok": False, "error": "archivo_faltante"}, status=400)
+
+    file_obj = request.FILES["file"]
+    try:
+        raw = file_obj.read()
+        for enc in ("utf-8-sig", "utf-16", "cp1252"):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                text = None
+        if text is None:
+            return JsonResponse({"ok": False, "error": "encoding_no_soportado"}, status=400)
+        reader = csv.DictReader(io.StringIO(text))
+        # Validar columnas
+        headers = [h.strip() for h in reader.fieldnames or []]
+        invalid = [h for h in headers if h not in meta["fields"]]
+        if invalid:
+            return JsonResponse({"ok": False, "error": f"columnas_invalidas:{','.join(invalid)}"}, status=400)
+
+        created = 0
+        with transaction.atomic():
+            for i, row in enumerate(reader):
+                payload = {}
+                for k, v in row.items():
+                    v = "" if v is None else v
+                    if isinstance(v, str) and (v.strip() == "" or v.strip().lower() == "null"):
+                        payload[k] = None
+                    else:
+                        payload[k] = v
+                # solo columnas conocidas
+                payload = {k: v for k, v in payload.items() if k in meta["fields"]}
+                err = _normalize_and_validate_fks(Model, payload)
+                if err:
+                    raise ValueError(f"fila_{i+1}:{err}")
+                Model.objects.create(**payload)
+                created += 1
+        return JsonResponse({"ok": True, "created": created})
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": f"import_error:{e}"}, status=400)
+
+
+# ---------- IMPORT CSV (TODAS LAS TABLAS) ----------
+@csrf_exempt
+@require_POST
+def api_import_all(request):
+    role = (request.session.get("role") or "").strip().lower()
+    if role != "duenio":
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    if "file" not in request.FILES:
+        return JsonResponse({"ok": False, "error": "archivo_faltante"}, status=400)
+
+    file_obj = request.FILES["file"]
+    try:
+        order = ["pagos", "servicios", "barbero", "cliente", "citas", "resultados", "duenio"]
+        created_summary = {}
+        with transaction.atomic():
+            with zipfile.ZipFile(file_obj) as zf:
+                for table in order:
+                    Model, meta = _model_and_meta(table)
+                    if not Model:
+                        continue
+                    filename = f"{table}.csv"
+                    if filename not in zf.namelist():
+                        continue
+                    raw = zf.read(filename)
+                    # decodifica en utf-8-sig, fallback utf-16 y cp1252
+                    text = None
+                    for enc in ("utf-8-sig", "utf-16", "cp1252"):
+                        try:
+                            text = raw.decode(enc)
+                            break
+                        except UnicodeDecodeError:
+                            text = None
+                    if text is None:
+                        raise ValueError(f"encoding_no_soportado:{filename}")
+                    reader = csv.DictReader(io.StringIO(text))
+                    headers = [h.strip() for h in reader.fieldnames or []]
+                    invalid = [h for h in headers if h not in meta["fields"]]
+                    if invalid:
+                        raise ValueError(f"columnas_invalidas:{filename}:{','.join(invalid)}")
+
+                    created = 0
+                    for i, row in enumerate(reader):
+                        payload = {}
+                        for k, v in row.items():
+                            v = "" if v is None else v
+                            if isinstance(v, str) and (v.strip() == "" or v.strip().lower() == "null"):
+                                payload[k] = None
+                            else:
+                                payload[k] = v
+                        payload = {k: v for k, v in payload.items() if k in meta["fields"]}
+                        err = _normalize_and_validate_fks(Model, payload)
+                        if err:
+                            raise ValueError(f"{filename}:fila_{i+1}:{err}")
+                        Model.objects.create(**payload)
+                        created += 1
+                    created_summary[table] = created
+        return JsonResponse({"ok": True, "created": created_summary})
+    except Exception as e:
+        return JsonResponse({"ok": False, "error": f"import_error:{e}"}, status=400)
 
 
 # ---------- TOP servicios / clientes ----------

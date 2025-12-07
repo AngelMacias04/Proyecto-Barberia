@@ -31,4 +31,8 @@ urlpatterns = [
     path('api/actualizar_tabla/', v.api_actualizar_tabla, name='api_actualizar_tabla'),
     path('api/eliminar_registro/', v.api_eliminar_registro, name='api_eliminar_registro'),
     path('api/top/', v.api_top_servicios_clientes, name='api_top_servicios_clientes'),
+    path('api/export_csv/', v.api_export_csv, name='api_export_csv'),
+    path('api/import_csv/', v.api_import_csv, name='api_import_csv'),
+    path('api/export_all/', v.api_export_all, name='api_export_all'),
+    path('api/import_all/', v.api_import_all, name='api_import_all'),
 ]
