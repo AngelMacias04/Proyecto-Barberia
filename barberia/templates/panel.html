@@ -18,7 +18,7 @@
                  linear-gradient(120deg,var(--bg1),var(--bg2));
       display:grid;place-items:start center
     }
-    .wrap{width:min(1100px,92vw);margin:42px 0}
+    .wrap{width:min(1300px,96vw);margin:42px 0}
     .card{background:var(--card);border:1px solid rgba(148,163,184,.2);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px}
     h1{margin:0 0 10px}
     .top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}
@@ -33,9 +33,12 @@
     .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 10px}
     .btn-sm{padding:8px 12px;border-radius:12px}
     .btn-primary{border-color:var(--accent);box-shadow:var(--ring)}
-    table{width:100%;border-collapse:collapse;margin-top:6px}
-    th,td{border:1px solid rgba(148,163,184,.25);padding:8px 10px;font-size:.95rem}
+    .table-wrap{overflow:auto}
+    table{width:100%;border-collapse:collapse;margin-top:6px;table-layout:auto}
+    th,td{border:1px solid rgba(148,163,184,.25);padding:8px 10px;font-size:.95rem;white-space:nowrap}
     th{background:#101a34}
+    .ok{background:#064e3b;color:#d1fae5}
+    .bad{background:#7f1d1d;color:#fee2e2}
     .hint{color:var(--muted);margin-top:6px}
     a.link{color:var(--accent);text-decoration:none}
     a.link:hover{text-decoration:underline}
@@ -102,7 +105,7 @@
       </div>
 
       <div id="status" class="hint">Selecciona una tabla.</div>
-      <div id="table-wrap"></div>
+      <div id="table-wrap" class="table-wrap"></div>
 
       {% if request.session.role == 'duenio' %}
       <div class="card" id="rank-card" style="margin-top:18px;background:#0f1a33;border-color:rgba(148,163,184,.25);display:none">
@@ -150,6 +153,9 @@
 
     // === NUEVO: rol en JS ===
     const ROLE = "{{ request.session.role|default:''|lower }}";
+    const SERVICE_FIELDS = ['servicio1_id','servicio2_id','servicio3_id'];
+    let SERVICES_CACHE = [];
+    let BARBEROS_CACHE = [];
 
     const gridBtns   = document.querySelectorAll('.grid .btn');
     const statusEl   = document.getElementById('status');
@@ -178,6 +184,10 @@
     let editable = false;     // modo edición
     let deleteMode = false;   // modo eliminar
     let selectedPk = null;    // PK seleccionada para eliminar
+    let servicesReady = false;
+    let barberosReady = false;
+    let editServiceControls = []; // para selects en modo edición
+    let currentRowsData = []; // datos actuales de la tabla
 
     // === NUEVO: qué tablas son solo lectura según rol ===
     function isReadonly(table) {
@@ -212,6 +222,65 @@
       return c;
     }
 
+    function hasCitaConflict(barbero, dia, hora, selfPk, rowsPool) {
+      if (!barbero || !dia || !hora) return false;
+      return rowsPool.some(r =>
+        r.id_barbero_id == barbero &&
+        r.dia == dia &&
+        r.hora == hora &&
+        (!selfPk || r.id_cita != selfPk)
+      );
+    }
+
+    function mergeEditsIntoCurrent(edits, pkField) {
+      const map = new Map();
+      currentRowsData.forEach(r => map.set(r[pkField], {...r}));
+      edits.forEach(r => {
+        if (r[pkField]) {
+          map.set(r[pkField], {...(map.get(r[pkField])||{}), ...r});
+        } else {
+          map.set(`tmp-${Math.random()}`, {...r});
+        }
+      });
+      return Array.from(map.values());
+    }
+
+    function hasDuplicateSchedule(rows, pkField) {
+      const seen = new Set();
+      for (const r of rows) {
+        const b = r.id_barbero_id;
+        const d = r.dia;
+        const h = r.hora;
+        if (!b || !d || !h) continue;
+        const key = `${b}|${d}|${h}`;
+        if (seen.has(key)) return true;
+        seen.add(key);
+      }
+      return false;
+    }
+
+    function snapshotCitasFromDom(includeCreate=false) {
+      if (currentTable !== 'citas') return currentRowsData;
+      const pkField = getPkField() || 'id_cita';
+      const map = new Map();
+      currentRowsData.forEach(r => map.set(r[pkField], {...r}));
+      const rows = document.querySelectorAll('#data-table tbody tr' + (includeCreate ? '' : ':not(#create-row)'));
+      rows.forEach(tr => {
+        const obj = {};
+        cols.forEach((c, idx) => {
+          const td = tr.children[idx];
+          if (!td) return;
+          const sel = td.querySelector('select');
+          const val = sel ? sel.value : (td.innerText || '').trim();
+          obj[c] = val;
+        });
+        const pk = obj[pkField] || `tmp-${Math.random()}`;
+        obj[pkField] = pk;
+        map.set(pk, {...(map.get(pk) || {}), ...obj});
+      });
+      return Array.from(map.values());
+    }
+
     async function solicitarTabla(nombreTabla) {
       currentTable = nombreTabla;
       editable = false; deleteMode = false; selectedPk = null;
@@ -232,7 +301,14 @@
         if (!data.ok) { statusEl.textContent = data.error || 'Error'; return; }
 
         const rows = data.rows || [];
+        currentRowsData = rows;
         statusEl.textContent = rows.length + ' registro(s) encontrados.';
+        if (nombreTabla === 'citas' && !servicesReady) {
+          await fetchServiciosCatalog();
+        }
+        if (nombreTabla === 'citas' && !barberosReady) {
+          await fetchBarberosCatalog();
+        }
         renderTable(rows);
       } catch (e) {
         statusEl.textContent = 'Error de red.';
@@ -258,7 +334,19 @@
       // === NUEVO: solo agrego fila de CREATE si NO es readonly
       if (!isReadonly(currentTable)) {
         html += '<tr id="create-row">';
-        cols.forEach(() => html += `<td contenteditable="true"></td>`);
+        cols.forEach((c) => {
+          if (currentTable === 'citas' && SERVICE_FIELDS.includes(c)) {
+            html += `<td class="svc-cell"><select data-svc="${c}" style="min-width:180px;"></select></td>`;
+          } else if (currentTable === 'citas' && c === 'total') {
+            html += `<td id="citas-total-cell"></td>`;
+          } else if (currentTable === 'citas' && c === 'id_barbero_id' && ROLE !== 'barbero') {
+            html += `<td><select data-barbero="create" style="min-width:150px;"></select></td>`;
+          } else if (currentTable === 'citas' && c === 'hora') {
+            html += `<td class="hora-cell"><select data-hora="create"></select></td>`;
+          } else {
+            html += `<td contenteditable="true"></td>`;
+          }
+        });
         html += '</tr>';
       }
 
@@ -283,48 +371,113 @@
 
     // ---------- CREATE ----------
     btnCreate.addEventListener('click', async () => {
-    if (!currentTable || !cols.length || isReadonly(currentTable)) return;
+      if (!currentTable || !cols.length || isReadonly(currentTable)) return;
 
-    const tr = document.getElementById('create-row');
-    if (!tr) { statusEl.textContent = 'No hay fila de creación.'; return; }
+      const tr = document.getElementById('create-row');
+      if (!tr) { statusEl.textContent = 'No hay fila de creación.'; return; }
 
-    const tds = Array.from(tr.querySelectorAll('td'));
-    const row = {};
-    cols.forEach((c,i) => row[c] = normalizeValue(tds[i].innerText));
-
-    const required = REQUIRED_FIELDS[currentTable] || [];
-    const missing = required.filter(k => row[k] === null);
-    if (missing.length){
-      statusEl.textContent = 'Faltan campos obligatorios: ' + missing.join(', ');
-      return;
-    }
-
-    try {
-      const res = await fetch("{% url 'api_crear_registro' %}", {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ table: currentTable, row })
+      const tds = Array.from(tr.querySelectorAll('td'));
+      const row = {};
+      cols.forEach((c,i) => {
+        if (currentTable === 'citas' && SERVICE_FIELDS.includes(c)) {
+          const sel = tds[i].querySelector('select');
+          row[c] = sel ? (sel.value || null) : null;
+        } else if (currentTable === 'citas' && c === 'id_barbero_id' && ROLE !== 'barbero') {
+          const sel = tds[i].querySelector('select');
+          row[c] = sel ? (sel.value || null) : normalizeValue(tds[i].innerText);
+        } else if (currentTable === 'citas' && c === 'id_barbero_id' && ROLE !== 'barbero') {
+          const sel = tds[i].querySelector('select');
+          row[c] = sel ? (sel.value || null) : null;
+        } else if (currentTable === 'citas' && c === 'hora') {
+          const sel = tds[i].querySelector('select');
+          row[c] = sel ? (sel.value || null) : normalizeValue(tds[i].innerText);
+        } else if (currentTable === 'citas' && c === 'total') {
+          row[c] = Number(document.getElementById('citas-total-cell')?.textContent || 0);
+        } else {
+          row[c] = normalizeValue(tds[i].innerText);
+        }
       });
-      const data = await res.json();
-      if (!data.ok) { statusEl.textContent = data.error || 'Error al crear.'; return; }
-      statusEl.textContent = 'Registro creado.';
-      solicitarTabla(currentTable);
-    } catch {
-      statusEl.textContent = 'Error de red al crear.';
-    }
-});
+
+      const required = REQUIRED_FIELDS[currentTable] || [];
+      const missing = required.filter(k => row[k] === null);
+      if (missing.length){
+        statusEl.textContent = 'Faltan campos obligatorios: ' + missing.join(', ');
+        return;
+      }
+
+      if (currentTable === 'citas') {
+        const pkField = getPkField() || 'id_cita';
+        const merged = mergeEditsIntoCurrent([row], pkField);
+        if (hasDuplicateSchedule(merged, pkField)) {
+          statusEl.textContent = 'barbero_ocupado (validación local)';
+          return;
+        }
+      }
+
+      try {
+        const res = await fetch("{% url 'api_crear_registro' %}", {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: currentTable, row })
+        });
+        const data = await res.json();
+        if (!data.ok) { statusEl.textContent = data.error || 'Error al crear.'; return; }
+        statusEl.textContent = 'Registro creado.';
+        solicitarTabla(currentTable);
+      } catch {
+        statusEl.textContent = 'Error de red al crear.';
+      }
+    });
 
     // ---------- EDIT ----------
-    btnEdit.addEventListener('click', () => {
+    btnEdit.addEventListener('click', async () => {
       if (!currentTable || !cols.length) return;
       if (isReadonly(currentTable)) return; // === NUEVO ===
 
       editable = true; deleteMode = false; selectedPk = null;
       btnSave.disabled = false; btnCancel.disabled = false;
+      editServiceControls = [];
 
-      // habilitar edición en todas menos la fila "create"
-      document.querySelectorAll('#data-table tbody tr:not(#create-row) td')
-        .forEach(td => td.setAttribute('contenteditable','true'));
+      // cargar servicios si no están
+      if (currentTable === 'citas' && !servicesReady) {
+        await fetchServiciosCatalog();
+      }
+      if (currentTable === 'citas' && !barberosReady) {
+        await fetchBarberosCatalog();
+      }
+
+      const bodyRows = document.querySelectorAll('#data-table tbody tr:not(#create-row)');
+      bodyRows.forEach(tr => {
+        tr.querySelectorAll('td').forEach((td, idx) => {
+          const col = cols[idx];
+          const current = (td.innerText || '').trim();
+          if (currentTable === 'citas') {
+            if (SERVICE_FIELDS.includes(col)) {
+              td.dataset.original = current;
+              td.innerHTML = `<select data-svc-edit="${col}" style="min-width:180px;"></select>`;
+              const sel = td.querySelector('select');
+              sel.dataset.original = current;
+            } else if (col === 'id_barbero_id' && ROLE !== 'barbero') {
+              td.dataset.original = current;
+              td.innerHTML = `<select data-barbero-edit="true" style="min-width:150px;"></select>`;
+              const sel = td.querySelector('select');
+              sel.dataset.original = current;
+            } else if (col === 'total') {
+              td.innerText = current;
+              td.dataset.originalTotal = current;
+              td.removeAttribute('contenteditable');
+            } else {
+              td.setAttribute('contenteditable','true');
+            }
+          } else {
+            td.setAttribute('contenteditable','true');
+          }
+        });
+      });
+
+      if (currentTable === 'citas') {
+        setupEditSelectsForCitas();
+      }
 
       statusEl.textContent = 'Edición habilitada. Modifica celdas y pulsa "Guardar cambios".';
     });
@@ -343,9 +496,33 @@
         if (tr.id === 'create-row') return;
         const tds = Array.from(tr.querySelectorAll('td'));
         const obj = {};
-        cols.forEach((c,i) => obj[c] = (tds[i].innerText || '').trim());
+        cols.forEach((c,i) => {
+          if (currentTable === 'citas' && SERVICE_FIELDS.includes(c)) {
+            const sel = tds[i].querySelector('select');
+            obj[c] = sel ? sel.value : (tds[i].innerText || '').trim();
+          } else if (currentTable === 'citas' && c === 'id_barbero_id' && ROLE !== 'barbero') {
+            const sel = tds[i].querySelector('select');
+            obj[c] = sel ? sel.value : (tds[i].innerText || '').trim();
+          } else if (currentTable === 'citas' && c === 'hora') {
+            const sel = tds[i].querySelector('select');
+            obj[c] = sel ? sel.value : (tds[i].innerText || '').trim();
+          } else if (currentTable === 'citas' && c === 'total') {
+            obj[c] = (tds[i].innerText || '').trim();
+          } else {
+            obj[c] = (tds[i].innerText || '').trim();
+          }
+        });
         rows.push(obj);
       });
+
+      if (currentTable === 'citas') {
+        const pkField = getPkField() || 'id_cita';
+        const merged = mergeEditsIntoCurrent(rows, pkField);
+        if (hasDuplicateSchedule(merged, pkField)) {
+          statusEl.textContent = 'barbero_ocupado (validación local)';
+          return;
+        }
+      }
 
       try {
         const res = await fetch("{% url 'api_actualizar_tabla' %}", {
@@ -515,6 +692,333 @@
           importAll(inputImportAll.files[0]);
           inputImportAll.value = '';
         }
+      });
+    }
+
+    // ---------- Servicios dropdown en Citas ----------
+    async function fetchServiciosCatalog() {
+      try {
+        const res = await fetch("{% url 'api_solicitar_tabla' %}", {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: 'servicios' })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          SERVICES_CACHE = (data.rows || []).map(r => ({
+            id_servicio: r.id_servicio,
+            servicio: r.servicio,
+            precio: Number(r.precio || 0)
+          }));
+          servicesReady = true;
+        }
+      } catch (e) {
+        servicesReady = false;
+      }
+    }
+
+    async function fetchBarberosCatalog() {
+      try {
+        const res = await fetch("{% url 'api_solicitar_tabla' %}", {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: 'barbero' })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          BARBEROS_CACHE = (data.rows || []).map(r => ({
+            id_barbero: r.id_barbero,
+            nombre: r.nombre
+          }));
+          barberosReady = true;
+        }
+      } catch (e) {
+        barberosReady = false;
+      }
+    }
+
+    function buildServiceOptions(selected, taken) {
+      const opts = ['<option value=""></option>'];
+      if (!SERVICES_CACHE.length) {
+        if (selected) {
+          opts.push(`<option value="${selected}" selected>${selected}</option>`);
+        }
+        return opts.join('');
+      }
+      SERVICES_CACHE.forEach(s => {
+        const disabled = taken.has(s.id_servicio) && s.id_servicio !== selected;
+        const sel = s.id_servicio === selected ? ' selected' : '';
+        opts.push(`<option value="${s.id_servicio}"${sel}${disabled ? ' disabled' : ''}>${s.id_servicio} - ${s.servicio} ($${s.precio})</option>`);
+      });
+      return opts.join('');
+    }
+
+    function buildBarberoOptions(selected) {
+      const opts = ['<option value=""></option>'];
+      if (!BARBEROS_CACHE.length) {
+        if (selected) opts.push(`<option value="${selected}" selected>${selected}</option>`);
+        return opts.join('');
+      }
+      BARBEROS_CACHE.forEach(b => {
+        const sel = b.id_barbero === selected ? ' selected' : '';
+        opts.push(`<option value="${b.id_barbero}"${sel}>${b.id_barbero}${b.nombre ? ' - ' + b.nombre : ''}</option>`);
+      });
+      if (selected && !BARBEROS_CACHE.find(b => b.id_barbero === selected)) {
+        opts.push(`<option value="${selected}" selected>${selected}</option>`);
+      }
+      return opts.join('');
+    }
+
+    function buildHoraOptions(selected, dataset, barberoId='', diaVal='', selfId='') {
+      const opts = ['<option value=""></option>'];
+      const hours = [
+        "10:00","10:30","11:00","11:30","12:00","12:30",
+        "13:00","13:30","14:00","14:30","15:00","15:30",
+        "16:00","16:30","17:00","17:30","18:00"
+      ];
+      hours.forEach(h => {
+        const sel = h === selected ? ' selected' : '';
+        const availabilityClass = checkAvailability(barberoId, diaVal, h, selfId, dataset);
+        opts.push(`<option value="${h}"${sel} class="${availabilityClass}">${h}</option>`);
+      });
+      return opts.join('');
+    }
+
+    function getRowValue(tr, colName) {
+      const idx = cols.indexOf(colName);
+      if (idx === -1) return '';
+      const td = tr.children[idx];
+      if (!td) return '';
+      const sel = td.querySelector('select');
+      if (sel) return sel.value || '';
+      return (td.innerText || '').trim();
+    }
+
+    function checkAvailability(barberoId, diaVal, horaVal, selfId='', dataset=null) {
+      if (!barberoId || !diaVal || !horaVal) return '';
+      const pool = dataset || snapshotCitasFromDom();
+      return pool.some(r =>
+        r.id_barbero_id == barberoId &&
+        r.dia == diaVal &&
+        r.hora == horaVal &&
+        (selfId ? r.id_cita != selfId : true)
+      ) ? 'bad' : 'ok';
+    }
+
+    function colorizeHoraSelect(sel, barberoId, diaVal, selfId='', dataset=null) {
+      const availability = checkAvailability(barberoId, diaVal, sel.value || '', selfId, dataset);
+      sel.classList.remove('ok','bad');
+      if (availability) sel.classList.add(availability);
+    }
+
+    function setupCitasCreateRow() {
+      if (!SERVICES_CACHE.length) return;
+      const row = document.getElementById('create-row');
+      if (!row) return;
+      const selects = Array.from(row.querySelectorAll('select[data-svc]'));
+      const totalCell = document.getElementById('citas-total-cell');
+      const horaSel = row.querySelector('select[data-hora="create"]');
+      const barberoSel = row.querySelector('select[data-barbero="create"]');
+
+      const refreshOptions = () => {
+        const taken = new Set(selects.map(s => s.value).filter(Boolean));
+        selects.forEach(sel => {
+          const current = sel.value;
+          sel.innerHTML = buildServiceOptions(current, taken);
+        });
+      };
+
+      const computeTotal = () => {
+        const ids = selects.map(s => s.value).filter(Boolean);
+        const total = ids.reduce((acc, id) => {
+          const svc = SERVICES_CACHE.find(x => x.id_servicio === id);
+          return acc + (svc ? svc.precio : 0);
+        }, 0);
+        totalCell.textContent = total;
+      };
+
+      selects.forEach(sel => {
+        sel.addEventListener('change', () => {
+          const val = sel.value;
+          const others = selects.filter(s => s !== sel).map(s => s.value);
+          if (val && others.includes(val)) {
+            sel.value = '';
+          }
+          refreshOptions();
+          computeTotal();
+        });
+      });
+
+      refreshOptions();
+      computeTotal();
+
+      // horas: 10:00 → 6:00 cada 30 min
+      if (horaSel) {
+        const barberoId = barberoSel ? barberoSel.value : getRowValue(row, 'id_barbero_id');
+        const diaVal = getRowValue(row, 'dia');
+        const dataset = snapshotCitasFromDom(false);
+        horaSel.innerHTML = buildHoraOptions('', dataset, barberoId, diaVal, '');
+        horaSel.addEventListener('change', () => {
+          const b = barberoSel ? barberoSel.value : getRowValue(row, 'id_barbero_id');
+          const d = getRowValue(row, 'dia');
+          const ds = snapshotCitasFromDom(false);
+          colorizeHoraSelect(horaSel, b, d, '', ds);
+        });
+        colorizeHoraSelect(horaSel, barberoId, diaVal, '', dataset);
+      }
+
+      if (barberoSel) {
+        barberoSel.innerHTML = buildBarberoOptions(getRowValue(row, 'id_barbero_id'));
+        barberoSel.addEventListener('change', () => {
+          const b = barberoSel.value;
+          const d = getRowValue(row, 'dia');
+          const ds = snapshotCitasFromDom(false);
+          colorizeHoraSelect(horaSel, b, d, '', ds);
+        });
+      }
+    }
+
+    function disableTotalEditingForCitas() {
+      if (currentTable !== 'citas') return;
+      document.querySelectorAll('#data-table tbody tr:not(#create-row) td').forEach((td, idx) => {
+        const col = cols[idx];
+        if (col === 'total') {
+          td.removeAttribute('contenteditable');
+        }
+      });
+    }
+
+    const originalRenderTable = renderTable;
+    renderTable = function(rows) {
+      originalRenderTable(rows);
+      if (currentTable === 'citas' && !isReadonly(currentTable)) {
+        setupCitasCreateRow();
+      }
+      disableTotalEditingForCitas();
+    };
+
+    function enforceNoDuplicateEdit(sel) {
+      const tr = sel.closest('tr');
+      if (!tr) return;
+      const selects = Array.from(tr.querySelectorAll('select[data-svc-edit]'));
+      const taken = new Set(selects.map(s => s.value).filter(Boolean));
+      selects.forEach(s => {
+        const current = s.value;
+        s.innerHTML = buildServiceOptions(current, taken);
+        s.value = current;
+        if (current && !s.value) {
+          s.insertAdjacentHTML('afterbegin', `<option value="${current}" selected>${current}</option>`);
+          s.value = current;
+        }
+      });
+    }
+
+    function computeRowTotal(tr) {
+      const hasPrices = SERVICES_CACHE.length > 0;
+      const tds = Array.from(tr.querySelectorAll('td'));
+      const ids = [];
+      tds.forEach((td, idx) => {
+        const col = cols[idx];
+        if (SERVICE_FIELDS.includes(col)) {
+          const sel = td.querySelector('select');
+          if (sel && sel.value) ids.push(sel.value);
+        }
+      });
+      // hora: si hay select, asegurar opciones y valor actual + color
+      const horaIdx = cols.indexOf('hora');
+      if (horaIdx >= 0 && tds[horaIdx]) {
+        const selHora = tds[horaIdx].querySelector('select');
+        if (selHora) {
+          const current = selHora.value || selHora.dataset.original || '';
+          const barberoId = getRowValue(tr, 'id_barbero_id');
+          const diaVal = getRowValue(tr, 'dia');
+          const selfId = getRowValue(tr, 'id_cita');
+          const dataset = snapshotCitasFromDom(false);
+          selHora.innerHTML = buildHoraOptions(current, dataset, barberoId, diaVal, selfId);
+          selHora.value = current;
+          colorizeHoraSelect(selHora, barberoId, diaVal, selfId, dataset);
+        }
+      }
+      const totalIdx = cols.indexOf('total');
+      if (totalIdx < 0) return;
+      const totalCell = tds[totalIdx];
+      const originalTotal = totalCell.dataset.originalTotal || (totalCell.innerText || '').trim();
+      const total = hasPrices
+        ? ids.reduce((acc, id) => {
+            const svc = SERVICES_CACHE.find(x => x.id_servicio === id);
+            return acc + (svc ? svc.precio : 0);
+          }, 0)
+        : null;
+      totalCell.innerText = (ids.length === 0 || total === null) ? originalTotal : total;
+      totalCell.removeAttribute('contenteditable');
+    }
+
+    function setupEditSelectsForCitas() {
+      editServiceControls = [];
+      const rows = Array.from(document.querySelectorAll('#data-table tbody tr:not(#create-row)'));
+      rows.forEach((tr, rowIdx) => {
+        const selects = Array.from(tr.querySelectorAll('select[data-svc-edit]'));
+        const originals = selects.map(s => s.dataset.original || '');
+        selects.forEach((sel, idx) => {
+          const current = originals[idx] || '';
+          const taken = new Set(originals.filter(Boolean)); // por fila
+          sel.innerHTML = buildServiceOptions(current, taken);
+          sel.value = current;
+          if (current && !sel.value) {
+            sel.insertAdjacentHTML('afterbegin', `<option value="${current}" selected>${current}</option>`);
+            sel.value = current;
+          }
+          editServiceControls.push(sel);
+          sel.addEventListener('change', () => {
+            enforceNoDuplicateEdit(sel);
+            computeRowTotal(tr);
+          });
+        });
+        // barbero: dropdown salvo rol barbero
+        if (ROLE !== 'barbero') {
+          const barIdx = cols.indexOf('id_barbero_id');
+          if (barIdx >= 0 && tr.children[barIdx]) {
+            const tdBar = tr.children[barIdx];
+            const currentBar = (currentRowsData[rowIdx]?.id_barbero_id || tdBar.innerText || '').trim();
+            tdBar.innerHTML = `<select data-barbero-edit="true" style="min-width:150px;"></select>`;
+            const selBar = tdBar.querySelector('select');
+            selBar.dataset.original = currentBar;
+            selBar.innerHTML = buildBarberoOptions(currentBar);
+            selBar.value = currentBar;
+            selBar.addEventListener('change', () => {
+              const ds = snapshotCitasFromDom(false);
+              const horaIdx = cols.indexOf('hora');
+              if (horaIdx >= 0 && tr.children[horaIdx]) {
+                const selHora = tr.children[horaIdx].querySelector('select');
+                if (selHora) {
+                  const currentHora = selHora.value || selHora.dataset.original || '';
+                  selHora.innerHTML = buildHoraOptions(currentHora, ds, selBar.value, getRowValue(tr, 'dia'), getRowValue(tr, 'id_cita'));
+                  selHora.value = currentHora;
+                  colorizeHoraSelect(selHora, selBar.value, getRowValue(tr, 'dia'), getRowValue(tr, 'id_cita'), ds);
+                }
+              }
+            });
+          }
+        }
+        // hora: sustituir por select con opciones y valor actual
+        const horaIdx = cols.indexOf('hora');
+        if (horaIdx >= 0 && tr.children[horaIdx]) {
+          const tdHora = tr.children[horaIdx];
+          const currentHora = (tdHora.innerText || '').trim();
+          tdHora.innerHTML = `<select data-hora-edit="true"></select>`;
+          const selHora = tdHora.querySelector('select');
+          selHora.dataset.original = currentHora;
+          const dataset = snapshotCitasFromDom(false);
+          const barVal = ROLE === 'barbero' ? getRowValue(tr, 'id_barbero_id') : getRowValue(tr, 'id_barbero_id');
+          selHora.innerHTML = buildHoraOptions(currentHora, dataset, barVal, getRowValue(tr, 'dia'), getRowValue(tr, 'id_cita'));
+          selHora.value = currentHora;
+          colorizeHoraSelect(selHora, barVal, getRowValue(tr, 'dia'), getRowValue(tr, 'id_cita'), dataset);
+          selHora.addEventListener('change', () => {
+            const ds = snapshotCitasFromDom(false);
+            colorizeHoraSelect(selHora, barVal, getRowValue(tr, 'dia'), getRowValue(tr, 'id_cita'), ds);
+          });
+        }
+        computeRowTotal(tr);
       });
     }
 
