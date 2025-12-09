@@ -193,7 +193,7 @@ def api_solicitar_tabla(request):
 
         # 3) Proyección y respuesta (tu front sigue igual)
         rows = list(qs.values(*meta["fields"]))
-        return JsonResponse({"ok": True, "rows": rows})
+        return JsonResponse({"ok": True, "rows": rows, "fields": meta["fields"]})
 
     except Exception as e:
         return JsonResponse({"ok": False, "error": f"server_error: {e}"}, status=500)
@@ -439,6 +439,7 @@ def api_import_csv(request):
             return JsonResponse({"ok": False, "error": f"columnas_invalidas:{','.join(invalid)}"}, status=400)
 
         created = 0
+        skipped = 0
         with transaction.atomic():
             for i, row in enumerate(reader):
                 payload = {}
@@ -450,12 +451,21 @@ def api_import_csv(request):
                         payload[k] = v
                 # solo columnas conocidas
                 payload = {k: v for k, v in payload.items() if k in meta["fields"]}
+
+                # Si ya existe el mismo PK, omitir la fila y seguir
+                pk_name = meta.get("pk")
+                pk_val = payload.get(pk_name)
+                if pk_name and pk_val is not None:
+                    if Model.objects.filter(**{pk_name: pk_val}).exists():
+                        skipped += 1
+                        continue
+
                 err = _normalize_and_validate_fks(Model, payload)
                 if err:
                     raise ValueError(f"fila_{i+1}:{err}")
                 Model.objects.create(**payload)
                 created += 1
-        return JsonResponse({"ok": True, "created": created})
+        return JsonResponse({"ok": True, "created": created, "skipped": skipped})
     except Exception as e:
         return JsonResponse({"ok": False, "error": f"import_error:{e}"}, status=400)
 

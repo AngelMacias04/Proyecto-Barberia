@@ -154,6 +154,16 @@
     // === NUEVO: rol en JS ===
     const ROLE = "{{ request.session.role|default:''|lower }}";
     const SERVICE_FIELDS = ['servicio1_id','servicio2_id','servicio3_id'];
+    // Campos por tabla (fallback cuando la tabla está vacía)
+    const DEFAULT_FIELDS = {
+      citas: ['id_cita','id_barbero_id','id_cliente_id','dia','hora','servicio1_id','servicio2_id','servicio3_id','total'],
+      servicios: ['id_servicio','servicio','precio'],
+      pagos: ['id_tipodepago','tipodepago'],
+      resultados: ['id_resultado','id_barbero_id','id_cita_id','total'],
+      barbero: ['id_barbero','nombre','telefono','correo'],
+      cliente: ['id_cliente','nombre','telefono','correo'],
+      duenio: ['id_duenio','user','password','name']
+    };
     let SERVICES_CACHE = [];
     let BARBEROS_CACHE = [];
 
@@ -301,6 +311,7 @@
         if (!data.ok) { statusEl.textContent = data.error || 'Error'; return; }
 
         const rows = data.rows || [];
+        const fieldsHint = data.fields || [];
         currentRowsData = rows;
         statusEl.textContent = rows.length + ' registro(s) encontrados.';
         if (nombreTabla === 'citas' && !servicesReady) {
@@ -309,17 +320,25 @@
         if (nombreTabla === 'citas' && !barberosReady) {
           await fetchBarberosCatalog();
         }
-        renderTable(rows);
+        renderTable(rows, fieldsHint);
       } catch (e) {
         statusEl.textContent = 'Error de red.';
       }
     }
 
-    function renderTable(rows) {
+    function renderTable(rows, fieldsHint=[]) {
       wrap.innerHTML = '';
-      if (!rows.length) { wrap.innerHTML = '<div class="hint">No hay datos.</div>'; cols = []; return; }
+      // Si no hay filas: si la tabla es de solo lectura, muestro el mensaje y salgo.
+      // Si es editable, igual construyo la tabla con las columnas conocidas para mostrar la fila de creación.
+      if (!rows.length) {
+        if (!currentTable) { wrap.innerHTML = '<div class="hint">No hay datos.</div>'; cols = []; return; }
+        if (isReadonly(currentTable)) { wrap.innerHTML = '<div class="hint">No hay datos.</div>'; cols = []; return; }
+        cols = fieldsHint && fieldsHint.length ? fieldsHint : (DEFAULT_FIELDS[currentTable] || []);
+        if (!cols.length) { wrap.innerHTML = '<div class="hint">No hay datos.</div>'; return; }
+      } else {
+        cols = Object.keys(rows[0]);
+      }
 
-      cols = Object.keys(rows[0]);
       let html = '<table id="data-table"><thead><tr>';
       cols.forEach(c => html += `<th>${c}</th>`);
       html += '</tr></thead><tbody>';
